@@ -1,6 +1,6 @@
 # <a name="NEXRADStatus" id="NEXRADStatus"></a>PHP for current NEXRAD Radar station status display
 
-This script will read (and cache for 60 seconds) the [NWS WSR-88D Transmit/Receive Status](https://weather.noaa.gov/monitor/radar/) page, extract the current status for a selected NEXRAD Station name, and format and display any Free Text messages associated with that station. The default for the script is to not display anything if the selected station is currently 'Green'(Active), and return a message if the station data is 'old' or has 'no data'. I'm using this on my radar page above the GRLevel3 heading to report status on Station KMUX.
+This script will read (and cache for 60 seconds) the [NWS WSR-88D Transmit/Receive Status](https://radar3pub.ncep.noaa.gov/) page, extract the current status for a selected NEXRAD Station name, and format and display any Free Text messages associated with that station. The default for the script is to not display anything if the selected station is currently 'Green'(Active), and return a message if the station data is 'old' or has 'no data'. I'm using this on my radar page above the GRLevel3 heading to report status on Station KMUX.
 
 Settings:
 
