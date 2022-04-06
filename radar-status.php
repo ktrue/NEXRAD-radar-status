@@ -18,16 +18,19 @@
 //  Version 1.14 - 24-Sep-2016 - fixes for NWS page design changes
 //  Version 1.15 - 22-Feb-2017 - use cURL for URL fetch+improved debugging info
 //  Version 1.16 - 04-Feb-2019 - use https for radar3pub.ncep.noaa.gov
+//  Version 1.17 - 22-May-2020 - update to allow use with wxnwsradar script set
+//  Version 1.18 - 18-Jan-2022 - fixes for Deprecated errata with PHP 8.1
+//  Version 1.19 - 06-Apr-2022 - more fixes for Deprecated errata with PHP 8.1
 
-    $Version = "radar-status.php V1.16 - 04-Feb-2019";
+    $Version = "radar-status.php V1.19 - 06-Apr-2022";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
-// script available at http://saratoga-weather.org/scripts.php
+// script available at https://saratoga-weather.org/scripts.php
 //  
 // you may copy/modify/use this script as you see fit,
 // no warranty is expressed or implied.
 //
 // Customized for: NOAA radar status from
-//   http://weather.noaa.gov/monitor/radar/
+//   https://weather.noaa.gov/monitor/radar/
 //
 //
 // output: creates XHTML 1.0-Strict HTML page (default)
@@ -120,6 +123,12 @@ if (isset($_REQUEST['nexrad']) ) { // for testing
   $myRadar = substr(strtoupper($_REQUEST['nexrad']),0,4);
 }
 
+if (isset($statRadar)) { // for include in wxnwsradar script
+  $myRadar = $statRadar; // use current radar in wxnwsradar scripts
+	$includeMode = true;   // force include mode
+	$noMsgIfActive = true; // suppress message if active
+}
+
 if (isset($_REQUEST['cache'])) {$refetchSeconds = 1; }
 
 $myRadar = strtoupper($myRadar);
@@ -143,7 +152,9 @@ if (! $includeMode) {
 
 // ------------- code starts here -------------------
 echo "<!-- $Version -->\n";
-
+if(isset($statRadar)) {
+		print "<!-- statRadar='$myRadar' used as myRadar -->\n";
+}
 // refresh cached copy of page if needed
 // fetch/cache code by Tom at carterlake.org
 $cacheName = $cacheFileDir . $cacheName;
@@ -156,13 +167,13 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
       $html = RS_fetchUrlWithoutHanging($fileName.'rcvxmit.sites.public.html',false);
 	  print $Debug;
 	  $Debug = '';
-	  list($hdr1,$content1) = explode("\r\n\r\n",$html);
+	  list($hdr1,$content1) = explode("\r\n\r\n",$html."\r\n\r\n");
 	  
       print "<!-- appending $cacheName from ${fileName}ftm.txt -->\n";
 	  $html2 = RS_fetchUrlWithoutHanging($fileName.'ftm.txt',false);
 	  print $Debug;
 	  $Debug = '';
-	  list($hdr2,$content2) = explode("\r\n\r\n",$html2);
+	  list($hdr2,$content2) = explode("\r\n\r\n",$html2."\r\n\r\n");
 	  
 	  if(strlen($content1) > 100 and strlen($content2) > 100) {
 		$fp = fopen($cacheName, "w");
@@ -397,11 +408,12 @@ WILL RESUME WITH THEIR PROCESSES ON MONDAY.
 */
 
 // Output the status
-
+  $divStarted = false;
   if (isset($statColor) and (!$noMsgIfActive or $statColor != '#33FF33') ) {
   print "<div $boxStyle>\n";
+	$divStarted = true;
   $pAge = ($showHMSAge)?sec2hmsRS($age)." h:m:s":"$age secs";
-  print "<p>NEXRAD Radar $myRadar status: <span style=\"background-color: $statColor; padding: 0 5px;\">$curStatus</span> [last data $pAge ago] as of $LCLdate</p>\n";
+  print "<p>NEXRAD Radar $myRadar status: <span style=\"background-color: $statColor; padding: 0 5px;\">$curStatus</span> [last data $pAge ago]<br/>as of $LCLdate</p>\n";
   
   if (isset($radarMsgs[$myRadar])) {
      foreach ($radarMsgs[$myRadar] as $timestamp => $msg) {
@@ -415,7 +427,6 @@ WILL RESUME WITH THEIR PROCESSES ON MONDAY.
   
   $niceFileName = preg_replace('!&!is','&amp;',$fileName);
   print "<p><small><a href=\"$niceFileName\">NWS WSR-88D Transmit/Receive Status</a></small></p>\n";
-  print "</div>\n";
   } // end suppress if radar active and $noMsgIfActive == true
  elseif (isset($statColor) ){
  
@@ -432,7 +443,7 @@ WILL RESUME WITH THEIR PROCESSES ON MONDAY.
   } else {
 	 print "<p>NEXRAD radar $myRadar status not found.</p>\n";
   }
-
+	if($divStarted) { print "</div>\n"; }
 
 // print footer of page if needed    
 // --------------- customize HTML if you like -----------------------
@@ -636,7 +647,7 @@ function RS_fetch_microtime()
     // the number of minutes, but we're interested in 
     // minutes past the hour: to get that, we need to 
     // divide by 60 again and keep the remainder
-    $minutes = intval(($sec / 60) % 60); 
+    $minutes = intval(fmod($sec / 60,60)); 
 
     // then add to $hms (with a leading 0 if needed)
     $hms .= str_pad($minutes, 2, "0", STR_PAD_LEFT). ':';
@@ -655,5 +666,3 @@ function RS_fetch_microtime()
 
    
 // --------------end of functions ---------------------------------------
-
-?>
