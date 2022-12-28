@@ -21,8 +21,9 @@
 //  Version 1.17 - 22-May-2020 - update to allow use with wxnwsradar script set
 //  Version 1.18 - 18-Jan-2022 - fixes for Deprecated errata with PHP 8.1
 //  Version 1.19 - 06-Apr-2022 - more fixes for Deprecated errata with PHP 8.1
+//  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
 
-    $Version = "radar-status.php V1.19 - 06-Apr-2022";
+    $Version = "radar-status.php V1.20 - 27-Dec-2022";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
 // script available at https://saratoga-weather.org/scripts.php
 //  
@@ -163,13 +164,13 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
       print "<!-- using Cached version of $cacheName -->\n";
       $html = implode('', file($cacheName));
     } else {
-      print "<!-- loading $cacheName from ${fileName}rcvxmit.sites.public.html -->\n";
+      print "<!-- loading $cacheName from {$fileName}rcvxmit.sites.public.html -->\n";
       $html = RS_fetchUrlWithoutHanging($fileName.'rcvxmit.sites.public.html',false);
 	  print $Debug;
 	  $Debug = '';
 	  list($hdr1,$content1) = explode("\r\n\r\n",$html."\r\n\r\n");
 	  
-      print "<!-- appending $cacheName from ${fileName}ftm.txt -->\n";
+      print "<!-- appending $cacheName from {$fileName}ftm.txt -->\n";
 	  $html2 = RS_fetchUrlWithoutHanging($fileName.'ftm.txt',false);
 	  print $Debug;
 	  $Debug = '';
