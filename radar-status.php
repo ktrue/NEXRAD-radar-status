@@ -22,8 +22,9 @@
 //  Version 1.18 - 18-Jan-2022 - fixes for Deprecated errata with PHP 8.1
 //  Version 1.19 - 06-Apr-2022 - more fixes for Deprecated errata with PHP 8.1
 //  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
+//  Version 1.21 - 08-Jul-2024 - fixes for bad data from https://radar3pub.ncep.noaa.gov/
 
-    $Version = "radar-status.php V1.20 - 27-Dec-2022";
+    $Version = "radar-status.php V1.21 - 08-Jul-2024";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
 // script available at https://saratoga-weather.org/scripts.php
 //  
@@ -286,6 +287,15 @@ now looks like
    $lastUTCtime = $matches[2][0];
    $td = explode('/',$matches[3][0]);
 //   print "<!-- td\n".print_r($td,true)."-->\n";
+   if($matches[3][0] == '00/00/00' and $matches[2][0] == '00:00:00'){
+     print "<!-- oops.. no data on $myRadar is available. Last data shows as '".
+       $matches[3][0].' '.$matches[2][0]."'-->\n";
+     $curStatus = 'No Data';
+     unset($statColor);
+     $age       = '';
+     $ageHMS    = '';
+     break;
+   }
    
    $lastUTCdate = '20'.$td[2].'-'.$td[0].'-'.$td[1].' '.$lastUTCtime.' GMT';
 //   print "<!-- lastUTCdate\n".print_r($lastUTCdate,true)."-->\n";
@@ -441,6 +451,9 @@ WILL RESUME WITH THEIR PROCESSES ON MONDAY.
   } 
 
  
+  } elseif (!isset($statColor) and $age == '') {
+   # no data but found
+    print "<!-- status display suppressed due to data not available -->\n";
   } else {
 	 print "<p>NEXRAD radar $myRadar status not found.</p>\n";
   }
