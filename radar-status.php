@@ -23,8 +23,9 @@
 //  Version 1.19 - 06-Apr-2022 - more fixes for Deprecated errata with PHP 8.1
 //  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
 //  Version 1.21 - 08-Jul-2024 - fixes for bad data from https://radar3pub.ncep.noaa.gov/
+//  Version 1.22 - 29-Jul-2024 - add optional logging for bad data
 
-    $Version = "radar-status.php V1.21 - 08-Jul-2024";
+    $Version = "radar-status.php V1.22 - 29-Jul-2024";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
 // script available at https://saratoga-weather.org/scripts.php
 //  
@@ -70,6 +71,9 @@
   $refetchSeconds = 60;     // refetch every nnnn seconds
   
   $showHMSAge = true; // =false for number of seconds, =true for H:M:S age display
+
+  $logFile  = 'radar-status-log.txt';
+  $doFailLog = false;  // =true to enable, =false to disable
 // end of settings
 
 // Constants
@@ -84,6 +88,7 @@ if (isset($SITE['tz'])) 		{$ourTZ = $SITE['tz'];}
 if (isset($SITE['timeFormat'])) {$timeFormat = $SITE['timeFormat'];}
 if (isset($SITE['showradarstatus'])) {$noMsgIfActive = ! $SITE['showradarstatus'];}
 if (isset($SITE['cacheFileDir']))     {$cacheFileDir = $SITE['cacheFileDir']; }
+if (isset($SITE['doFailLog']))  {$doFailLog = $SITE['doFailLog']; }
 // end of overrides from Settings.php if available
 
 // ------ start of code -------
@@ -154,6 +159,9 @@ if (! $includeMode) {
 
 // ------------- code starts here -------------------
 echo "<!-- $Version -->\n";
+$logFile = $cacheFileDir . $logFile;
+
+if ($doFailLog) {print "<!-- failure log to $logFile enabled -->\n";}
 if(isset($statRadar)) {
 		print "<!-- statRadar='$myRadar' used as myRadar -->\n";
 }
@@ -194,6 +202,12 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 		  print "<!-- main  content length=".strlen($content1).", headers\n".$hdr1."\n-->\n";
 		  print "<!-- txtmsg content length=".strlen($content2).", headers\n".$hdr2."\n-->\n";
 		  print "<!-- cache not saved to $cacheName. -->\n";
+      if($doFailLog) {
+        $fMsg = gmdate('c');
+        $fMsg .= ": fetch fail hdrs='$hdr1'\n";
+        file_put_contents($logFile,$fMsg,FILE_APPEND);
+        print "<!-- added entry to $logFile -->\n";
+      }
 	  }
 }
 
@@ -208,6 +222,12 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 
   if(strlen($html) < 250) {
 	  print "<!-- unable to process radar-status.. insufficient data -->\n";
+      if($doFailLog) {
+        $fMsg = gmdate('c');
+        $fMsg .= ": insufficient data obtained hdrs='$hdr1'\n";
+        file_put_contents($logFile,$fMsg,FILE_APPEND);
+        print "<!-- added entry to $logFile -->\n";
+      }
 	  return;
   }
   
@@ -294,6 +314,14 @@ now looks like
      unset($statColor);
      $age       = '';
      $ageHMS    = '';
+     if($doFailLog) {
+      $fMsg = gmdate('c');
+      $fMsg .= ": bad data for $myRadar, Last data shows as '".
+       $matches[3][0].' '.$matches[2][0]."'\n";
+      file_put_contents($logFile,$fMsg,FILE_APPEND);
+      print "<!-- added entry to $logFile -->\n";
+     }
+
      break;
    }
    
