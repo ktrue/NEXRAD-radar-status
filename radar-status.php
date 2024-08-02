@@ -26,7 +26,7 @@ ini_set('display_errors','1');
 //  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
 //  Version 1.21 - 08-Jul-2024 - fixes for bad data from https://radar3pub.ncep.noaa.gov/
 //  Version 1.22 - 29-Jul-2024 - add optional logging for bad data
-//  Version 1.23 - 02-Aug-2024 - add additional diagnostice, fix PHP warning errata
+//  Version 1.23 - 02-Aug-2024 - add additional diagnostics, fix PHP warning errata
 
     $Version = "radar-status.php V1.23 - 02-Aug-2024";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
@@ -76,6 +76,7 @@ ini_set('display_errors','1');
   $showHMSAge = true; // =false for number of seconds, =true for H:M:S age display
 
   $logFile  = 'radar-status-log.txt';
+//  note: logfile with have YYYYmmdd prepended to .txt extension
   $doFailLog = false;  // =true to enable, =false to disable
 // end of settings
 
@@ -163,6 +164,9 @@ if (! $includeMode) {
 // ------------- code starts here -------------------
 echo "<!-- $Version -->\n";
 $logFile = $cacheFileDir . $logFile;
+$logFile = str_replace('.txt','-'.gmdate('Ymd').'.txt',$logFile);
+
+if(isset($_GET['log'])) {$doFailLog = true;}
 
 if ($doFailLog) {print "<!-- failure log to $logFile enabled -->\n";}
 if(isset($statRadar)) {
@@ -174,12 +178,20 @@ $cacheName = $cacheFileDir . $cacheName;
 $hdr1 = '';
 $hdr2 = '';
 $Debug = '';
+$fetch1= '';
+$fetch2= '';
+$html = '';
+$html2 = '';
+$didFetch1 = false;
+$didFetch2 = false;
+
 if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()) {
       print "<!-- using Cached version of $cacheName -->\n";
       $html = implode('', file($cacheName));
     } else {
       print "<!-- loading $cacheName from {$fileName}rcvxmit.sites.public.html -->\n";
       $html = RS_fetchUrlWithoutHanging($fileName.'rcvxmit.sites.public.html',false);
+      $fetch1 = $Debug;
 	  print $Debug;
 	  $Debug = '';
 	  list($hdr1,$content1) = explode("\r\n\r\n",$html."\r\n\r\n");
@@ -187,6 +199,7 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
       print "<!-- appending $cacheName from {$fileName}ftm.txt -->\n";
 	  $html2 = RS_fetchUrlWithoutHanging($fileName.'ftm.txt',false);
 	  print $Debug;
+    $fetch2 = $Debug;
 	  $Debug = '';
 	  list($hdr2,$content2) = explode("\r\n\r\n",$html2."\r\n\r\n");
 	  
@@ -209,7 +222,7 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 		  print "<!-- cache not saved to $cacheName. -->\n";
       if($doFailLog) {
         $fMsg = gmdate('c');
-        $fMsg .= ": fetch fail hdr1='$hdr1'\n hdr2='$hdr2'\n----\n";
+        $fMsg .= ": fetch fail \n$fetch1\n hdr1='$hdr1'\n $fetch2\n  hdr2='$hdr2'\n----\n";
         file_put_contents($logFile,$fMsg,FILE_APPEND);
         print "<!-- added entry to $logFile -->\n";
       }
@@ -225,7 +238,8 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 #	$Status .= "<!-- using date_default_timezone_set(\"$ourTZ\") -->\n";
    }
 
-  if(strlen($html) < 250) {
+  if($didFetch1 and $didFetch2 and 
+    (strlen($html) < 250 or strlen($html2) < 250 )) {
 	  print "<!-- unable to process radar-status.. insufficient data -->\n";
       if($doFailLog) {
         $fMsg = gmdate('c');
