@@ -1,4 +1,6 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors','1');
 // PHP script by Ken True, webmaster@saratoga-weather.org
 // radar-status.php  
 //  Version 1.00 - 21-Jan-2008 - Inital release
@@ -24,8 +26,9 @@
 //  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
 //  Version 1.21 - 08-Jul-2024 - fixes for bad data from https://radar3pub.ncep.noaa.gov/
 //  Version 1.22 - 29-Jul-2024 - add optional logging for bad data
+//  Version 1.23 - 02-Aug-2024 - add additional diagnostice, fix PHP warning errata
 
-    $Version = "radar-status.php V1.22 - 29-Jul-2024";
+    $Version = "radar-status.php V1.23 - 02-Aug-2024";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
 // script available at https://saratoga-weather.org/scripts.php
 //  
@@ -168,6 +171,8 @@ if(isset($statRadar)) {
 // refresh cached copy of page if needed
 // fetch/cache code by Tom at carterlake.org
 $cacheName = $cacheFileDir . $cacheName;
+$hdr1 = '';
+$hdr2 = '';
 $Debug = '';
 if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()) {
       print "<!-- using Cached version of $cacheName -->\n";
@@ -204,7 +209,7 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 		  print "<!-- cache not saved to $cacheName. -->\n";
       if($doFailLog) {
         $fMsg = gmdate('c');
-        $fMsg .= ": fetch fail hdrs='$hdr1'\n";
+        $fMsg .= ": fetch fail hdr1='$hdr1'\n hdr2='$hdr2'\n----\n";
         file_put_contents($logFile,$fMsg,FILE_APPEND);
         print "<!-- added entry to $logFile -->\n";
       }
@@ -224,7 +229,7 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 	  print "<!-- unable to process radar-status.. insufficient data -->\n";
       if($doFailLog) {
         $fMsg = gmdate('c');
-        $fMsg .= ": insufficient data obtained hdrs='$hdr1'\n";
+        $fMsg .= ": insufficient data obtained \n------------\n";
         file_put_contents($logFile,$fMsg,FILE_APPEND);
         print "<!-- added entry to $logFile -->\n";
       }
@@ -355,13 +360,13 @@ now looks like
 
   // extract the messages
  preg_match('|<pre[^>]*>(.*)</pre>|Usi',$html,$matches);
- $messages = $matches[1];
+ $messages = isset($matches[1])?$matches[1]:'Not Available';
  // now split up the messages and process
  $messages = preg_replace('|NOUS|Us','||NOUS',$messages) . '|'; // add message delimiters
  $messages = preg_replace('|ÿÿ|Uis',"\n||NOUSnn",$messages); // remove garbage characters.
  $messages = preg_replace('|ð|Uis','',$messages);  // remove garbage characters
  preg_match_all('!\|NOUS(.*)\|!Us',$messages,$matches); // split the messages
- $messages = $matches[1];  // now have array of messages in order
+ $messages = isset($matches[1])?$matches[1]:array();  // now have array of messages in order
  
  $radarMsgs = array();  // for storing the messages in a 'cleansed' format by Radar key, then date
  foreach ($messages as $n => $msg) {
