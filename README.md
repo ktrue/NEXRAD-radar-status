@@ -75,8 +75,12 @@ Include the following code in the page where you'd like the output to appear:
 
 ## Samples of the output ( With $noMsgIfActive = false: )
 
-This is displayed if $noMsgIfActive=false; only. It is not displayed otherwise
-
-Displayed if Yellow condition - data is not 'recent'.
-
-Displayed if Red condition - 'No Data'
+This is displayed if $noMsgIfActive=false; only. It is not displayed otherwise<br>
+![nexrad-active](https://github.com/user-attachments/assets/a33dbc09-371c-4efd-aa11-df1337d5ab35)
+<br>
+Displayed if Yellow condition - data is not 'recent' 5-30 minute delay.<br>
+![nexrad-notrecent](https://github.com/user-attachments/assets/8f948585-b4ea-4858-9597-5b6be23d4e46)
+<br>
+Displayed if Red condition - 'No Data for over 30 minutes'<br>
+![nexrad-nodata](https://github.com/user-attachments/assets/1c910fa4-1ea6-482a-b002-aeccc64a3337)
+<br>
