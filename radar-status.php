@@ -1,6 +1,4 @@
 <?php
-error_reporting(E_ALL);
-ini_set('display_errors','1');
 // PHP script by Ken True, webmaster@saratoga-weather.org
 // radar-status.php  
 //  Version 1.00 - 21-Jan-2008 - Inital release
@@ -25,10 +23,9 @@ ini_set('display_errors','1');
 //  Version 1.19 - 06-Apr-2022 - more fixes for Deprecated errata with PHP 8.1
 //  Version 1.20 - 27-Dec-2022 - fixes for PHP 8.2
 //  Version 1.21 - 08-Jul-2024 - fixes for bad data from https://radar3pub.ncep.noaa.gov/
-//  Version 1.22 - 29-Jul-2024 - add optional logging for bad data
-//  Version 1.23 - 02-Aug-2024 - add additional diagnostics, fix PHP warning errata
+//  Version 2.00 - 10-Sep-2025 - rewrite to use api.weather.gov/radar information
 
-    $Version = "radar-status.php V1.23 - 02-Aug-2024";
+    $Version = "radar-status.php V2.00 - 10-Sep-2025";
 //  error_reporting(E_ALL);  // uncomment to turn on full error reporting
 // script available at https://saratoga-weather.org/scripts.php
 //  
@@ -36,27 +33,22 @@ ini_set('display_errors','1');
 // no warranty is expressed or implied.
 //
 // Customized for: NOAA radar status from
-//   https://weather.noaa.gov/monitor/radar/
+//   https://api.weather.gov/radar/stations/{SITE} and
+//   https://api.weather.gov/products/types/FTM/locations/{last-3-char-ID}  i.e. MUX messages
 //
 //
 // output: creates XHTML 1.0-Strict HTML page (default)
-// Options on URL:
-//      inc=Y    -- returns only the body code for inclusion
-//                         in other webpages.  Omit to return full HTML.
-// example URL:
-//  http://your.website/radar-status.php?inc=Y
-//  would return data without HTML header/footer 
 //
 // Usage:
 //  you can use this webpage standalone (customize the HTML portion below)
 //  or you can include it in an existing page:
 //  no parms:  $doIncludeRS = true; include("radar-status.php"); 
-//  parms:    include("http://your.website/radar-status.php?inc=Y");
-//
 //
 // settings:  
 //  change myRadar to your local NEXRAD radar site ID.
 //    other settings are optional
+//  Note: main settings here will be overridden by entries in Setings.php
+//    when using the Saratoga website USA template
 // 
   $myRadar = 'KMUX';   // San Francisco
 //
@@ -69,20 +61,18 @@ ini_set('display_errors','1');
   $boxStyle = 'style="border: dashed 1px black; background-color:#FFFFCC; margin: 5px; padding: 0 5px;"';  
 //
   $cacheFileDir = './';   // default cache file directory
-  $cacheName = "radar-status.txt";  // used to store the file so we don't have to
+  $cacheName = "radar-status.json";  // used to store the file so we don't have to
 //                          fetch it each time
   $refetchSeconds = 60;     // refetch every nnnn seconds
   
   $showHMSAge = true; // =false for number of seconds, =true for H:M:S age display
-
-  $logFile  = 'radar-status-log.txt';
-//  note: logfile with have YYYYmmdd prepended to .txt extension
-  $doFailLog = false;  // =true to enable, =false to disable
+  $showMsgCnt = 2;    // show up to 2 most recent messages
 // end of settings
 
 // Constants
 // don't change $fileName or script may break ;-)
-  $fileName = 'https://radar3pub.ncep.noaa.gov/';
+  $fileName = 'https://api.weather.gov/radar/stations/';
+  $fileName2 = 'https://api.weather.gov/products/types/FTM/locations/';
 // end of constants
 // ---------------------------------------------------------
 // overrides from Settings.php if available
@@ -92,12 +82,12 @@ if (isset($SITE['tz'])) 		{$ourTZ = $SITE['tz'];}
 if (isset($SITE['timeFormat'])) {$timeFormat = $SITE['timeFormat'];}
 if (isset($SITE['showradarstatus'])) {$noMsgIfActive = ! $SITE['showradarstatus'];}
 if (isset($SITE['cacheFileDir']))     {$cacheFileDir = $SITE['cacheFileDir']; }
-if (isset($SITE['doFailLog']))  {$doFailLog = $SITE['doFailLog']; }
 // end of overrides from Settings.php if available
 
 // ------ start of code -------
-if (isset($_REQUEST['sce']) && strtolower($_REQUEST['sce']) == 'view' ) {
-//--self downloader --
+if (isset($_REQUEST['sce']) && strtolower($_REQUEST['sce']) == 'view' 
+    and strlen($_REQUEST['sce']) == 4) {
+   //--self downloader --
    $filenameReal = __FILE__;
    $download_size = filesize($filenameReal);
    header('Pragma: public');
@@ -107,8 +97,14 @@ if (isset($_REQUEST['sce']) && strtolower($_REQUEST['sce']) == 'view' ) {
    header("Accept-Ranges: bytes");
    header("Content-Length: $download_size");
    header('Connection: close');
+   
    readfile($filenameReal);
    exit;
+}
+if (isset($_REQUEST['sce'])) {
+  header("HTTP/1.1 403 Forbidden");
+  print "<h1>Hacking attempt. Denied.</h1>\n";
+  exit();
 }
 
 // Check parameters and force defaults/ranges
@@ -126,7 +122,7 @@ if (isset($doIncludeRS) and $doIncludeRS ) {
 if ($includeMode) {$includeMode = "Y";}
 
 if (isset($_REQUEST['show']) ) { // for testing
-  $noMsgIfActive = (strtolower($_REQUEST['show']) != 'active');
+  $noMsgIfActive = (strtolower($_REQUEST['show']) !== 'active');
 }
 
 if (isset($_REQUEST['nexrad']) ) { // for testing
@@ -163,71 +159,123 @@ if (! $includeMode) {
 
 // ------------- code starts here -------------------
 echo "<!-- $Version -->\n";
-$logFile = $cacheFileDir . $logFile;
-$logFile = str_replace('.txt','-'.gmdate('Ymd').'.txt',$logFile);
-
-if(isset($_GET['log'])) {$doFailLog = true;}
-
-if ($doFailLog) {print "<!-- failure log to $logFile enabled -->\n";}
 if(isset($statRadar)) {
 		print "<!-- statRadar='$myRadar' used as myRadar -->\n";
 }
 // refresh cached copy of page if needed
 // fetch/cache code by Tom at carterlake.org
 $cacheName = $cacheFileDir . $cacheName;
-$hdr1 = '';
-$hdr2 = '';
-$Debug = '';
-$fetch1= '';
-$fetch2= '';
-$html = '';
-$html2 = '';
-$didFetch1 = false;
-$didFetch2 = false;
+$cacheName = str_replace('.json',"-".$myRadar.'.json',$cacheName);
+$myRadar3   = strtoupper(substr($myRadar,1,3));
 
+$Debug = '';
 if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()) {
       print "<!-- using Cached version of $cacheName -->\n";
       $html = implode('', file($cacheName));
     } else {
-      print "<!-- loading $cacheName from {$fileName}rcvxmit.sites.public.html -->\n";
-      $html = RS_fetchUrlWithoutHanging($fileName.'rcvxmit.sites.public.html',false);
-      $fetch1 = $Debug;
-	  print $Debug;
-	  $Debug = '';
-	  list($hdr1,$content1) = explode("\r\n\r\n",$html."\r\n\r\n");
-	  
-      print "<!-- appending $cacheName from {$fileName}ftm.txt -->\n";
-	  $html2 = RS_fetchUrlWithoutHanging($fileName.'ftm.txt',false);
-	  print $Debug;
-    $fetch2 = $Debug;
-	  $Debug = '';
-	  list($hdr2,$content2) = explode("\r\n\r\n",$html2."\r\n\r\n");
-	  
-	  if(strlen($content1) > 100 and strlen($content2) > 100) {
-		$fp = fopen($cacheName, "w");
-		if ($fp) {
-		  $write = fputs($fp, $html);
-		  $write = fputs($fp,"\n||||||\n");
-		  $write = fputs($fp,$hdr2."\n<pre>\n".$content2."</pre>\n");
-		   fclose($fp);  
-		   print "<!-- cache written to $cacheName. -->\n";
-		} else {
-		   print "<!-- unable to save cache to $cacheName. -->\n";
-		}
-		$html .= "\n||||||\n"."\n<pre>\n".$content2."</pre>\n";
+      print "<!-- loading $cacheName from {$fileName}{$myRadar} -->\n";
+      list($content1,$RC) = RS_fetchUrlWithoutHanging($fileName.$myRadar);
+      print $Debug;
+      $Debug = '';
+      if($RC !== 200) {
+        print "<p>Radar $myRadar station returns no data. RC=$RC</p>\n";
+        return(0);
+      }
+      print "<!-- appending $cacheName from {$fileName2}{$myRadar3} -->\n";
+      list($content2,$RC2)= RS_fetchUrlWithoutHanging($fileName2.$myRadar3);
+      print $Debug;
+      $Debug = '';
+        // extract the messages
+
+       $radarMsgs = array();  // for storing the messages in a 'cleansed' format by Radar key, then date
+
+      #  $radarMsgs[$thisRadar][$thisDate] = $thisMsg; // save away for later lookup
+      /*
+          "@graph": [
+              {
+                  "@id": "https://api.weather.gov/products/f1e89484-b954-43f8-97a4-6450e5aeaf9f",
+                  "id": "f1e89484-b954-43f8-97a4-6450e5aeaf9f",
+                  "wmoCollectiveId": "NOUS66",
+                  "issuingOffice": "KMTR",
+                  "issuanceTime": "2025-09-09T01:00:00+00:00",
+                  "productCode": "FTM",
+                  "productName": "WSR-88D Radar Outage Notification / Free Text Message"
+              },
+      */
+       $FTM = json_decode($content2,true);
+  
+       foreach ($FTM['@graph'] as $n => $J) {
+         #print "<!-- J=".var_export($J,true)." -->\n";
+
+         list($msg,$RC) = RS_fetchUrlWithoutHanging($J['@id']);
+         /*
+        {
+          "@context": {
+              "@version": "1.1",
+              "@vocab": "https://api.weather.gov/ontology#"
+          },
+          "@id": "https://api.weather.gov/products/f1e89484-b954-43f8-97a4-6450e5aeaf9f",
+          "id": "f1e89484-b954-43f8-97a4-6450e5aeaf9f",
+          "wmoCollectiveId": "NOUS66",
+          "issuingOffice": "KMTR",
+          "issuanceTime": "2025-09-09T01:00:00+00:00",
+          "productCode": "FTM",
+          "productName": "WSR-88D Radar Outage Notification / Free Text Message",
+          "productText": "\n000\nNOUS66 KMTR 090100\nFTMMUX\nMessage Date:  Sep 09 2025 01:00:57\n\nKMUX radar is back up and sending data.                                         \n\n"
+        } 
+         */
+
+         $T =  json_decode($msg,true);
+
+         $thisDate = strtotime($T['issuanceTime']);
+         $rawMsg  = $T['productText'];
+         $mparts = explode("\n",$rawMsg);
+         #print "<!-- mparts=".var_export($mparts,true)." -->\n";
+         foreach ($mparts as $k => $mp) {
+           if(stripos($mp,'message') !== false or stripos($mp,'outage notif') !== false) {$k++; break;}
+         }
+         if($k >= count($mparts)) {$k=5;}
+         $thisMsg = implode(' ',array_slice($mparts,$k));
+
+         $radarMsgs[$myRadar][$thisDate] = $thisMsg; // save away for later lookup
+
+       }
+  
+      $content3 = json_encode($radarMsgs);
+ 
+      if(strlen($content1) > 100 and strlen($content2) > 50) {
+      $fp = fopen($cacheName, "w");
+      if ($fp) {
+        $write = fputs($fp,$content1);
+        $write = fputs($fp,"\n||||||\n");
+        $write = fputs($fp,$content2."\n");
+        $write = fputs($fp,"\n||||||\n");
+        $write = fputs($fp,$content3."\n");
+        fclose($fp);  
+         print "<!-- cache written to $cacheName. -->\n";
+      } else {
+         print "<!-- unable to save cache to $cacheName. -->\n";
+      }
+		  $html = $content1."\n||||||\n".$content2."\n||||||\n".$content3."\n";
 	  } else {
 		  print "<!-- problem fetching main/txtmsg file(s) -->\n";
-		  print "<!-- main  content length=".strlen($content1).", headers\n".$hdr1."\n-->\n";
-		  print "<!-- txtmsg content length=".strlen($content2).", headers\n".$hdr2."\n-->\n";
+		  print "<!-- main  content length=".strlen($content1)."\n-->\n";
+		  print "<!-- txtmsg content length=".strlen($content2)."\n-->\n";
 		  print "<!-- cache not saved to $cacheName. -->\n";
-      if($doFailLog) {
-        $fMsg = gmdate('c');
-        $fMsg .= ": fetch fail \n$fetch1\n hdr1='$hdr1'\n $fetch2\n  hdr2='$hdr2'\n----\n";
-        file_put_contents($logFile,$fMsg,FILE_APPEND);
-        print "<!-- added entry to $logFile -->\n";
-      }
 	  }
 }
+
+list($content1,$content2,$content3) = explode('||||||',$html);
+
+$MAIN = json_decode($content1,true);
+$FTM  = json_decode($content2,true);
+$radarMsgs = json_decode($content3,true);
+
+
+#print "<!--\n MAIN=".var_export($MAIN,true)."\n -->\n";
+#print "<!--\n  FTM=".var_export($FTM,true)."\n -->\n";
+
+#print "\n\n<!-- ################################################################# -->\n\n";
 
 # Set timezone in PHP5/PHP4 manner
   if (!function_exists('date_default_timezone_set')) {
@@ -238,232 +286,35 @@ if (file_exists($cacheName) and filemtime($cacheName) + $refetchSeconds > time()
 #	$Status .= "<!-- using date_default_timezone_set(\"$ourTZ\") -->\n";
    }
 
-  if($didFetch1 and $didFetch2 and 
-    (strlen($html) < 250 or strlen($html2) < 250 )) {
+  if(strlen($html) < 250) {
 	  print "<!-- unable to process radar-status.. insufficient data -->\n";
-      if($doFailLog) {
-        $fMsg = gmdate('c');
-        $fMsg .= ": insufficient data obtained \n------------\n";
-        file_put_contents($logFile,$fMsg,FILE_APPEND);
-        print "<!-- added entry to $logFile -->\n";
-      }
 	  return;
   }
   
-  // extract the updated date/time
-//  print "<pre>\n";
-  preg_match_all('|Last-Modified: (.*)\r|Uis',$html,$matches);
-//  print_r($matches);
-  if(!isset($matches[1][0])) { // no Last-Modified header.. look for the status line
-    // <b>Status as of 08.03.2016 wed 21:05:01 utc
-    preg_match_all('|Status as of (\S+)\s+\S+\s(\S+) utc|Uis',$html,$matches);
-	$t = explode('.',$matches[1][0]);
-	
-	$UDate = $t[2].'-'.$t[0].'-'.$t[1] . ' ' . $matches[2][0] . ' GMT';
-	//print "<!-- UDate matches \n" . print_r($matches,true)." -->\n";
-	$UDate = gmdate('r',strtotime($UDate));
-  } else {
-    $UDate = $matches[1][0];
-  }
- // $UDate = 'Fri, 05 Jun 2015 00:14:01 GMT'
-  $UDp = explode(" ",$UDate);
-  //print "<!-- UDp\n" .print_r($UDp,true)." -->\n";
- /*
-Array $UDp is now:
-(
-    [0] => Tue,
-    [1] => 08
-    [2] => Mar
-    [3] => 2016
-    [4] => 21:40:01
-    [5] => +0000
-)
-*/
-  $UTCdate = strtotime($UDate);
-  $LCLdate = date($timeFormat,$UTCdate);
-  //print "<!--LCLdate '$LCLdate' UDate='$UDate' UTCdate=$UTCdate -->\n";
-  
-/*  The data looks like this:
-<td ALIGN=CENTER BGCOLOR="#FF0000" class = "  white "  id= whitelink><b>
-KMUX</a></b><br>23:28:17</td> <!--:No Data:-->
-<td ALIGN=CENTER BGCOLOR="#33FF33" class = " black"  id= blacklink><b>
-KMVX</a></b><br>00:15:17</td>
-
-then looked like
-
-<td align=center bgcolor="#FF0000" class=" white " id=whitelink><b>KAMX</a></b><br>04:06:04</td> <!--:No Data:-->
-<td align=center bgcolor="#FFFF00" class="black" id=blacklink><b>KAPX</a></b><br>04:26:04</td>
-<td align=center bgcolor="#33FF33" class="black" id=blacklink><b>KARX</a></b><br>04:42:27</td>
-<td align=center bgcolor="#FF0000" class=" white " id=whitelink><b>KATX</a></b><br>02:33:21</td> <!--:No Data:-->
-
-now looks like
-
-<td align=center bgcolor="#0000FF" class="white" id=whitelink><b>KVNX</b><br>19:03:46<br>07/06/15</td>
-<td align=center bgcolor="#33FF33" class="black" id=blacklink><b>KVTX</b><br>20:49:11<br>07/06/15</td>
-
-*/
-  preg_match_all('|<td.*bgcolor="([^"]+)"\s+class="([^"]+)"[^>]*>(.*)</td>|Uis',$html,$matches);
-//  print "<!-- matches\n".print_r($matches,true)." -->\n";
-  $status = $matches[1];
-  $recs = $matches[3];
-/*
-            [104] => <b>KMUX</b><br>20:50:16<br>07/06/15
-            [105] => <b>KMVX</b><br>20:46:59<br>07/06/15
-*/
-  
-  print "<!-- ".count($recs)." records found -->\n";
-
-  foreach ($recs as $n => $rec) {
-   if (! preg_match("|$myRadar|",$rec)) {continue;}
-   
-   $statColor = $status[$n];
-   $statColor = str_replace('#0000FF','#FF0000',$statColor);
-//   print "statColor='$statColor'\n";
-   preg_match_all('|<b>(.*)</b><br>(.*)<br>(.*)|is',$rec,$matches);
-//   print "<!-- radar\n".print_r($matches,true)."-->\n";
-
-   $statRadar = $matches[1][0];
-   $lastUTCtime = $matches[2][0];
-   $td = explode('/',$matches[3][0]);
-//   print "<!-- td\n".print_r($td,true)."-->\n";
-   if($matches[3][0] == '00/00/00' and $matches[2][0] == '00:00:00'){
-     print "<!-- oops.. no data on $myRadar is available. Last data shows as '".
-       $matches[3][0].' '.$matches[2][0]."'-->\n";
-     $curStatus = 'No Data';
-     unset($statColor);
-     $age       = '';
-     $ageHMS    = '';
-     if($doFailLog) {
-      $fMsg = gmdate('c');
-      $fMsg .= ": bad data for $myRadar, Last data shows as '".
-       $matches[3][0].' '.$matches[2][0]."'\n";
-      file_put_contents($logFile,$fMsg,FILE_APPEND);
-      print "<!-- added entry to $logFile -->\n";
-     }
-
-     break;
-   }
-   
-   $lastUTCdate = '20'.$td[2].'-'.$td[0].'-'.$td[1].' '.$lastUTCtime.' GMT';
+   $lastUTCdate = $MAIN['latency']['levelTwoLastReceivedTime'];
 //   print "<!-- lastUTCdate\n".print_r($lastUTCdate,true)."-->\n";
    $t=strtotime($lastUTCdate);
+   $UTCdate = time();
+   $LCLdate = date($timeFormat,$UTCdate);
+
    print "<!-- \nUTCdate    =$UTCdate (".gmdate('Y-m-d h:i:s',$UTCdate).")\n" .
                 "lastUTCdate=$t (".gmdate('Y-m-d h:i:s',$t).")\n -->\n";
    $age = $UTCdate - $t;
 //   if ($age < 0) { $age += (60*60*24); } // account for one day extra downtime if need be
    $ageHMS = gmdate('H:m:s',$age);
-   preg_match_all('|<!--:(.*):-->|is',$rec,$matches);
-   $curStatus = 'Active';
+   print "<!-- age=$age seconds ($ageHMS) -->\n";
+   #preg_match_all('|<!--:(.*):-->|is',$rec,$matches);
+   $curStatus = $MAIN['rda']['properties']['status'];
+
+   $statColor = '#33FF33'; # Assume normal color = green
+   if($age >=  5*60) {$statColor = '#FFFF00';} # delayed yellow
+   if($age >= 30*60) {$statColor = '#FF0000';} # inop RED
+
    if ($statColor <> '#33FF33') {
-     $curStatus = 'Data not recent';
+     $curStatus .= ' - Data not recent';
    }
-   if (isset($matches[1][0])) {
-     $curStatus = $matches[1][0];
-   }
-   
-//   print "statRadar='$statRadar' lastUTCtime='$lastUTCtime' curStatus='$curStatus'\n";
-   
-//   print "$prec";
-//   print "$rec";
-   
-    break;
-//	print "$rec";  // this shouldn't print ever
-  }
 
 
-
-  // extract the messages
- preg_match('|<pre[^>]*>(.*)</pre>|Usi',$html,$matches);
- $messages = isset($matches[1])?$matches[1]:'Not Available';
- // now split up the messages and process
- $messages = preg_replace('|NOUS|Us','||NOUS',$messages) . '|'; // add message delimiters
- $messages = preg_replace('|ÿÿ|Uis',"\n||NOUSnn",$messages); // remove garbage characters.
- $messages = preg_replace('|ð|Uis','',$messages);  // remove garbage characters
- preg_match_all('!\|NOUS(.*)\|!Us',$messages,$matches); // split the messages
- $messages = isset($matches[1])?$matches[1]:array();  // now have array of messages in order
- 
- $radarMsgs = array();  // for storing the messages in a 'cleansed' format by Radar key, then date
- foreach ($messages as $n => $msg) {
- 
- /* a $msg looks like this:
- 66 KMTR 200618
-FTMMUX
-MESSAGE DATE:  JAN 20 2008 06:17:55
-KMUX SAN FRANCISCO RADAR IS EXPERIENCING INTERMITTENT DATA FLOW
-INTERUPTIONS. TROUBLE-SHOOTING PROCEDURES ARE CURRENTLY UNDERWAY TO
-DETERMINE THE PROBLEM AND RESTORE NORMAL OPERATIONS.
-*/
-   $msgline = explode("\n",$msg);  // get 'em separated into individual lines.
-   $t = explode(' ',trim($msgline[0]));
-   $thisRadar = $t[1];
-   $thisTD = $t[2];
-   if (substr($thisRadar,1,3) != substr($msgline[1],3,3)) { // sometimes one reports for another
-     $thisRadar = substr($thisRadar,0,1) . substr($msgline[1],3,3);
-   }
-   
-   preg_match('|date:\s+(.*)|i',trim($msgline[2]),$matches);
-   $istart = 3;
-   if (!isset($matches[1])) {
-   // oops.. no message line
-     $istart--;
- /*
- use the Updated UTC to 'fill in the blanks' from the header line
-(
-    [0] => Mon
-    [1] => Jan
-    [2] => 21
-    [3] => 00:14:59
-    [4] => CUT
-    [5] => 2008
-)
-*/
-     $tdate = substr($thisTD,0,2) . '-' . $UDp[1] . '-' . $UDp[5] . ' ' .
-	          substr($thisTD,2,2) . ':' . substr($thisTD,4,2) . ':00 UTC';
-	 $thisDate = strtotime($tdate);
-	
-	} else { 
-   
-      $thisDate = strtotime($matches[1] . ' UTC');
-	}
-	
-   $thisMsg = '';
-   for ($i=$istart;$i<count($msgline);$i++) { $thisMsg .= $msgline[$i] . "\n"; };
-   
-   $thisMsg = preg_replace("|\n|is",'',$thisMsg);
-   $radarMsgs[$thisRadar][$thisDate] = $thisMsg; // save away for later lookup
- 
- 
- }
- 
-// print_r($radarMsgs);
-
-/*  $radarMsgs now looks like this:
-    [KVNX] => Array
-        (
-            [1200854014] => THE KVNX WSR-88D WILL BE DOWN FOR A BRIEF PERIOD BETWEEN 1840 AND 1900 UTC FOR R
-EQUIRED MAINTENANCE.  AT WFO/OUN, 1833 UTC - 1/20/08
-
-
-            [1200857882] => THE KVNX WSR-88D HAS BEEN RETURNED TO SERVICE.  AT WFO/OUN, 1935 UTC - 1/20/08  
-
-
-        )
-
-    [KMUX] => Array
-        (
-            [1200809875] => KMUX SAN FRANCISCO RADAR IS EXPERIENCING INTERMITTENT DATA FLOW
-INTERUPTIONS. TROUBLE-SHOOTING PROCEDURES ARE CURRENTLY UNDERWAY TO
-DETERMINE THE PROBLEM AND RESTORE NORMAL OPERATIONS.
-
-
-            [1200890280] => KMUX SAN FRANCISCO RADAR IS CONTINUING TO EXPERIENCE INTERMITTENT
-DATA FLOW INTERUPTIONS. TROUBLE-SHOOTING PROCEDURES CONTINUE.
-PROBLEMS ARE LIKELY WITH TELCO CONNECTIONS AND VERIZON TECHNICIANS
-WILL RESUME WITH THEIR PROCESSES ON MONDAY.
-
-
-        )
-*/
 
 // Output the status
   $divStarted = false;
@@ -474,26 +325,29 @@ WILL RESUME WITH THEIR PROCESSES ON MONDAY.
   print "<p>NEXRAD Radar $myRadar status: <span style=\"background-color: $statColor; padding: 0 5px;\">$curStatus</span> [last data $pAge ago]<br/>as of $LCLdate</p>\n";
   
   if (isset($radarMsgs[$myRadar])) {
+     $imsg = 0;
      foreach ($radarMsgs[$myRadar] as $timestamp => $msg) {
-	   $msg = htmlspecialchars($msg);
-	   $msg = preg_replace('|\n|is',"<br/>\n",$msg);
-	   print "<p>Message date: " . date($timeFormat,$timestamp) . "<br/>\n";
-	   print $msg . "</p>\n";
+       $imsg++;
+       if($imsg > $showMsgCnt) {break;}
+       $msg = htmlspecialchars($msg);
+       $msg = preg_replace('|\n|is',"<br/>\n",$msg);
+       print "<p>Message date: " . date($timeFormat,$timestamp) . "<br/>\n";
+       print $msg . "</p>\n";
      }
   } 
   
   
   $niceFileName = preg_replace('!&!is','&amp;',$fileName);
-  print "<p><small><a href=\"$niceFileName\">NWS WSR-88D Transmit/Receive Status</a></small></p>\n";
+  print "<p><small><a href=\"https://www.weather.gov/nl2/NEXRADView\">NWS WSR-88D NEXRADView</a></small></p>\n";
   } // end suppress if radar active and $noMsgIfActive == true
  elseif (isset($statColor) ){
  
   print "<!-- NEXRAD Radar $myRadar status: $curStatus [last data $age secs ago] as of $LCLdate -->\n";
   if (isset($radarMsgs[$myRadar])) {
      foreach ($radarMsgs[$myRadar] as $timestamp => $msg) {
-	   $msg = htmlspecialchars($msg);
-	   print "<!-- Message date: " . date($timeFormat,$timestamp) . "\n";
-	   print $msg . " -->\n";
+       $msg = htmlspecialchars($msg);
+       print "<!-- Message date: " . date($timeFormat,$timestamp) . "\n";
+       print $msg . " -->\n";
      }
   } 
 
@@ -519,12 +373,12 @@ if (! $includeMode ) {
 
 // ----------------------------functions ----------------------------------- 
  
-function RS_fetchUrlWithoutHanging($url,$useFopen) {
+function RS_fetchUrlWithoutHanging($url) {
 // get contents from one URL and return as string 
   global $Debug, $needCookie;
   
   $overall_start = time();
-  if (! $useFopen) {
+  
    // Set maximum number of seconds (can have floating-point) to wait for feed before displaying page without feed
    $numberOfSeconds=6;   
 
@@ -542,7 +396,7 @@ function RS_fetchUrlWithoutHanging($url,$useFopen) {
 
   curl_setopt($ch,CURLOPT_HTTPHEADER,                          // request LD-JSON format
      array (
-         "Accept: text/html,text/plain"
+         "Accept: application/ld+json"
      ));
 
   curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $numberOfSeconds);  //  connection timeout
@@ -602,6 +456,7 @@ Array
   $Debug .= "<!-- HTTP stats: " .
     " RC=".$cinfo['http_code'] .
     " dest=".$cinfo['primary_ip'] ;
+    $RC = $cinfo['http_code'];
 	if(isset($cinfo['primary_port'])) { 
 	  $Debug .= " port=".$cinfo['primary_port'] ;
 	}
@@ -623,57 +478,15 @@ Array
   //$Debug .= "<!-- curl info\n".print_r($cinfo,true)." -->\n";
   curl_close($ch);                                              // close the cURL session
   //$Debug .= "<!-- raw data\n".$data."\n -->\n"; 
-  $i = strpos($data,"\r\n\r\n");
-  $headers = substr($data,0,$i);
-  $content = substr($data,$i+4);
+  $stuff = explode("\r\n\r\n",$data); // maybe we have more than one header due to redirects.
+  $content = (string)array_pop($stuff); // last one is the content
+  $headers = (string)array_pop($stuff); // next-to-last-one is the headers
   if($cinfo['http_code'] <> '200') {
     $Debug .= "<!-- headers returned:\n".$headers."\n -->\n"; 
   }
-  return $data;                                                 // return headers+contents
+  return (array($content,$RC));                                                 // return headers+contents
 
- } else {
-//   print "<!-- using file_get_contents function -->\n";
-   $STRopts = array(
-	  'http'=>array(
-	  'method'=>"GET",
-	  'protocol_version' => 1.1,
-	  'header'=>"Cache-Control: no-cache, must-revalidate\r\n" .
-				"Cache-control: max-age=0\r\n" .
-				"Connection: close\r\n" .
-				"User-agent: Mozilla/5.0 (radar-status.php - saratoga-weather.org)\r\n" .
-				"Accept: text/html,text/plain\r\n"
-	  ),
-	  'https'=>array(
-	  'method'=>"GET",
-	  'protocol_version' => 1.1,
-	  'header'=>"Cache-Control: no-cache, must-revalidate\r\n" .
-				"Cache-control: max-age=0\r\n" .
-				"Connection: close\r\n" .
-				"User-agent: Mozilla/5.0 (radar-status.php - saratoga-weather.org)\r\n" .
-				"Accept: text/html,text/plain\r\n"
-	  )
-	);
-	
-   $STRcontext = stream_context_create($STRopts);
-
-   $T_start = RS_fetch_microtime();
-   $xml = file_get_contents($url,false,$STRcontext);
-   $T_close = RS_fetch_microtime();
-   $headerarray = get_headers($url,0);
-   $theaders = join("\r\n",$headerarray);
-   $xml = $theaders . "\r\n\r\n" . $xml;
-
-   $ms_total = sprintf("%01.3f",round($T_close - $T_start,3)); 
-   $Debug .= "<!-- file_get_contents() stats: total=$ms_total secs -->\n";
-   $Debug .= "<-- get_headers returns\n".$theaders."\n -->\n";
-//   print " file() stats: total=$ms_total secs.\n";
-   $overall_end = time();
-   $overall_elapsed =   $overall_end - $overall_start;
-   $Debug .= "<!-- fetch function elapsed= $overall_elapsed secs. -->\n"; 
-//   print "fetch function elapsed= $overall_elapsed secs.\n"; 
-   return($xml);
- }
-
+ 
 }    // end ECF_fetch_URL
 
 // ------------------------------------------------------------------
